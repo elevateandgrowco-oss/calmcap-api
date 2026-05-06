@@ -120,78 +120,45 @@ app.post("/tiktok/upload", upload.single("video"), async (req, res) => {
     return res.status(400).json({ error: "Provide a video file or video_url" });
   }
 
-  const privacyLevel = publish === "true" ? "PUBLIC_TO_EVERYONE" : "SELF_ONLY";
+  const isDirect    = publish === "true";
   const isFileUpload = !!videoBuffer;
 
-  try {
-    const initBody = {
-      post_info: {
-        title: (caption || "CalmCap product video").slice(0, 150),
-        privacy_level: privacyLevel,
-        disable_duet: false,
-        disable_comment: false,
-        disable_stitch: false,
-        brand_organic_toggle: true,
-      },
-      source_info: isFileUpload
-        ? {
-            source: "FILE_UPLOAD",
-            video_size:        videoBuffer.length,
-            chunk_size:        videoBuffer.length,
-            total_chunk_count: 1,
-          }
-        : { source: "PULL_FROM_URL", video_url },
-    };
+  // Draft uploads use the inbox endpoint (video.upload scope, no app approval needed)
+  // Direct posts use the publish endpoint (video.publish scope, requires approved app)
+  const initEndpoint = isDirect
+    ? "https://open.tiktokapis.com/v2/post/publish/video/init/"
+    : "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/";
 
-    const initRes = await axios.post(
-      "https://open.tiktokapis.com/v2/post/publish/video/init/",
-      initBody,
-      {
-        headers: {
-          Authorization:   `Bearer ${access_token}`,
-          "Content-Type":  "application/json; charset=UTF-8",
-        },
-      }
-    );
+  try {
+    // Inbox/draft only needs source_info — no post_info
+    const initBody = isDirect
+      ? {
+          post_info: {
+            title: (caption || "CalmCap product video").slice(0, 150),
+            privacy_level: "PUBLIC_TO_EVERYONE",
+            disable_duet: false,
+            disable_comment: false,
+            disable_stitch: false,
+            brand_organic_toggle: true,
+          },
+          source_info: isFileUpload
+            ? { source: "FILE_UPLOAD", video_size: videoBuffer.length, chunk_size: videoBuffer.length, total_chunk_count: 1 }
+            : { source: "PULL_FROM_URL", video_url },
+        }
+      : {
+          source_info: isFileUpload
+            ? { source: "FILE_UPLOAD", video_size: videoBuffer.length, chunk_size: videoBuffer.length, total_chunk_count: 1 }
+            : { source: "PULL_FROM_URL", video_url },
+        };
+
+    const initRes = await axios.post(initEndpoint, initBody, {
+      headers: {
+        Authorization:  `Bearer ${access_token}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+    });
 
     if (initRes.data.error?.code && initRes.data.error.code !== "ok") {
-      // Unaudited apps can't post publicly — retry as draft automatically
-      if (
-        initRes.data.error.code === "unaudited_client_can_only_post_to_private_accounts" &&
-        initBody.post_info.privacy_level !== "SELF_ONLY"
-      ) {
-        initBody.post_info.privacy_level = "SELF_ONLY";
-        const retryRes = await axios.post(
-          "https://open.tiktokapis.com/v2/post/publish/video/init/",
-          initBody,
-          {
-            headers: {
-              Authorization:  `Bearer ${access_token}`,
-              "Content-Type": "application/json; charset=UTF-8",
-            },
-          }
-        );
-        if (retryRes.data.error?.code && retryRes.data.error.code !== "ok") {
-          return res.status(400).json({ error: retryRes.data.error });
-        }
-        const { upload_url: ru, publish_id: rp } = retryRes.data.data;
-        if (isFileUpload && ru) {
-          await axios.put(ru, videoBuffer, {
-            headers: {
-              "Content-Type":  "video/mp4",
-              "Content-Range": `bytes 0-${videoBuffer.length - 1}/${videoBuffer.length}`,
-            },
-            maxBodyLength: Infinity, maxContentLength: Infinity,
-          });
-        }
-        return res.json({
-          publish_id: rp,
-          privacy_level: "SELF_ONLY",
-          is_draft: true,
-          status: "PROCESSING_UPLOAD",
-          note: "App pending review — saved as draft (direct post requires approval)",
-        });
-      }
       return res.status(400).json({ error: initRes.data.error });
     }
 
@@ -211,8 +178,8 @@ app.post("/tiktok/upload", upload.single("video"), async (req, res) => {
 
     res.json({
       publish_id,
-      privacy_level: privacyLevel,
-      is_draft: privacyLevel === "SELF_ONLY",
+      privacy_level: isDirect ? "PUBLIC_TO_EVERYONE" : "SELF_ONLY",
+      is_draft: !isDirect,
       status: "PROCESSING_UPLOAD",
     });
   } catch (err) {
