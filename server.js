@@ -52,7 +52,7 @@ app.get("/tiktok/auth-url", (req, res) => {
   const url =
     `https://www.tiktok.com/v2/auth/authorize/` +
     `?client_key=${CLIENT_KEY}` +
-    `&scope=user.info.basic,video.upload,video.publish` +
+    `&scope=user.info.basic,user.info.profile,user.info.stats,video.upload,video.publish` +
     `&response_type=code` +
     `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
     `&state=${state}`;
@@ -92,7 +92,7 @@ app.post("/tiktok/exchange", async (req, res) => {
     let user = null;
     try {
       const userRes = await axios.get(
-        "https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url,username",
+        "https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url,username,bio_description,is_verified,follower_count,following_count,likes_count,video_count",
         { headers: { Authorization: `Bearer ${access_token}` } }
       );
       user = userRes.data?.data?.user || null;
