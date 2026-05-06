@@ -155,6 +155,43 @@ app.post("/tiktok/upload", upload.single("video"), async (req, res) => {
     );
 
     if (initRes.data.error?.code && initRes.data.error.code !== "ok") {
+      // Unaudited apps can't post publicly — retry as draft automatically
+      if (
+        initRes.data.error.code === "unaudited_client_can_only_post_to_private_accounts" &&
+        initBody.post_info.privacy_level !== "SELF_ONLY"
+      ) {
+        initBody.post_info.privacy_level = "SELF_ONLY";
+        const retryRes = await axios.post(
+          "https://open.tiktokapis.com/v2/post/publish/video/init/",
+          initBody,
+          {
+            headers: {
+              Authorization:  `Bearer ${access_token}`,
+              "Content-Type": "application/json; charset=UTF-8",
+            },
+          }
+        );
+        if (retryRes.data.error?.code && retryRes.data.error.code !== "ok") {
+          return res.status(400).json({ error: retryRes.data.error });
+        }
+        const { upload_url: ru, publish_id: rp } = retryRes.data.data;
+        if (isFileUpload && ru) {
+          await axios.put(ru, videoBuffer, {
+            headers: {
+              "Content-Type":  "video/mp4",
+              "Content-Range": `bytes 0-${videoBuffer.length - 1}/${videoBuffer.length}`,
+            },
+            maxBodyLength: Infinity, maxContentLength: Infinity,
+          });
+        }
+        return res.json({
+          publish_id: rp,
+          privacy_level: "SELF_ONLY",
+          is_draft: true,
+          status: "PROCESSING_UPLOAD",
+          note: "App pending review — saved as draft (direct post requires approval)",
+        });
+      }
       return res.status(400).json({ error: initRes.data.error });
     }
 
